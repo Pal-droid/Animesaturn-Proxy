@@ -1,10 +1,9 @@
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import re
-from urllib.parse import urljoin, quote, urlparse
-from io import StringIO
+from urllib.parse import urljoin
 import logging
 
 # Enable logging
@@ -38,10 +37,9 @@ async def proxy_stream(request: Request):
     if not origin_url:
         return {"error": "Missing 'url' query parameter"}
 
-    # Detect HLS vs MP4
+    # Detect file type
     is_m3u8 = origin_url.lower().endswith(".m3u8")
     is_ts = origin_url.lower().endswith(".ts")
-    is_mp4 = origin_url.lower().endswith(".mp4")
 
     # ---------------- HLS (.m3u8) proxy ----------------
     if is_m3u8:
@@ -84,7 +82,7 @@ async def proxy_stream(request: Request):
             async for chunk in resp.aiter_bytes(128 * 1024):  # 128 KB chunks
                 yield chunk
 
-    # Pre-open stream to get upstream headers
+    # Pre-open stream to get headers
     async with client.stream("GET", origin_url, headers=headers) as tmp_resp:
         status_code = tmp_resp.status_code
         content_type = "video/MP2T" if is_ts else tmp_resp.headers.get("content-type", "video/mp4")
@@ -107,7 +105,6 @@ async def proxy_stream(request: Request):
 def root():
     return {"message": "Proxy server ready (HLS + MP4/TS)"}
 
-from fastapi.responses import HTMLResponse
 
 @app.get("/embed", response_class=HTMLResponse)
 async def embed(request: Request):
@@ -145,26 +142,51 @@ async def embed(request: Request):
             const video = document.getElementById('video');
             const source = "/proxy?url={video_url}";
 
+            // === Load video ===
             if (source.endsWith(".m3u8")) {{
                 if (Hls.isSupported()) {{
                     const hls = new Hls();
                     hls.loadSource(source);
                     hls.attachMedia(video);
-                    hls.on(Hls.Events.MANIFEST_PARSED, () => {{
-                        video.play();
-                    }});
+                    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
                 }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
-                    video.src = source; // Safari native support
-                    video.addEventListener('loadedmetadata', () => {{
-                        video.play();
-                    }});
+                    video.src = source;
+                    video.addEventListener('loadedmetadata', () => video.play());
                 }} else {{
                     document.body.innerHTML = "<h3 style='color:white'>Browser cannot play HLS streams.</h3>";
                 }}
             }} else {{
-                video.src = source; // MP4/TS direct
+                video.src = source;
                 video.play();
             }}
+
+            // === Auto-next + progress tracking ===
+            video.addEventListener('ended', () => {{
+                window.parent.postMessage({{ type: 'saturn-video-ended' }}, '*');
+            }});
+
+            let lastSent = 0;
+            video.addEventListener('timeupdate', () => {{
+                const t = Math.floor(video.currentTime);
+                if (t % 5 === 0 && t !== lastSent) {{
+                    lastSent = t;
+                    window.parent.postMessage(
+                        {{
+                            type: 'saturn-progress',
+                            currentTime: video.currentTime,
+                            duration: video.duration
+                        }},
+                        '*'
+                    );
+                }}
+            }});
+
+            // === Resume support ===
+            window.addEventListener('message', (e) => {{
+                if (e.data?.type === 'resume-video' && e.data?.time) {{
+                    video.currentTime = e.data.time;
+                }}
+            }});
         </script>
     </body>
     </html>
