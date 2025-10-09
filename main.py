@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from urllib.parse import urljoin
 import logging
+import re
 
 # ---------------- Logging ----------------
 logging.basicConfig(level=logging.INFO)
@@ -11,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 # ---------------- FastAPI app ----------------
 app = FastAPI()
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -47,25 +47,31 @@ async def proxy_stream(request: Request):
         origin_base = origin_url.rsplit("/", 1)[0] + "/"
 
         new_lines = []
+        skip_next = False  # flag for #EXT-X-STREAM-INF
         for line in body.splitlines():
             line = line.strip()
-            if not line or line.startswith("#"):
-                # For audio track lines: rewrite URI
-                if 'URI="' in line:
-                    # Extract URI inside quotes
-                    import re
-                    match = re.search(r'URI="([^"]+)"', line)
-                    if match:
-                        uri = match.group(1)
-                        abs_uri = urljoin(origin_base, uri)
-                        line = line.replace(uri, f"/proxy?url={abs_uri}")
-                new_lines.append(line)
+            if not line:
                 continue
 
-            # For normal lines (segments or variant playlists)
-            if not line.startswith("http"):
+            if line.startswith("#EXT-X-STREAM-INF"):
+                new_lines.append(line)
+                skip_next = True
+                continue
+
+            if skip_next:
                 abs_uri = urljoin(origin_base, line)
                 line = f"/proxy?url={abs_uri}"
+                skip_next = False
+            elif not line.startswith("#") and not line.startswith("http"):
+                abs_uri = urljoin(origin_base, line)
+                line = f"/proxy?url={abs_uri}"
+            elif 'URI="' in line:  # audio/subs
+                match = re.search(r'URI="([^"]+)"', line)
+                if match:
+                    uri = match.group(1)
+                    abs_uri = urljoin(origin_base, uri)
+                    line = line.replace(uri, f"/proxy?url={abs_uri}")
+
             new_lines.append(line)
 
         return Response(
@@ -151,10 +157,38 @@ async def embed(request: Request):
 
             if (source.endsWith(".m3u8")) {{
                 if (Hls.isSupported()) {{
-                    const hls = new Hls();
+                    const hls = new Hls({{ autoStartLoad: true, startPosition: -1 }});
                     hls.loadSource(source);
                     hls.attachMedia(video);
-                    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+
+                    // Allow manual quality switching
+                    hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {{
+                        const levels = data.levels;
+                        console.log("Available levels:", levels);
+
+                        // optional: auto start at highest
+                        hls.startLevel = levels.length - 1;
+
+                        // Add a simple quality switch UI
+                        const controls = document.createElement('div');
+                        controls.style.position = 'absolute';
+                        controls.style.top = '10px';
+                        controls.style.right = '10px';
+                        controls.style.zIndex = '999';
+                        controls.style.color = 'white';
+                        levels.forEach((level, idx) => {{
+                            const btn = document.createElement('button');
+                            btn.innerText = level.height + "p";
+                            btn.style.margin = '2px';
+                            btn.onclick = () => hls.currentLevel = idx;
+                            controls.appendChild(btn);
+                        }});
+                        document.body.appendChild(controls);
+                    }});
+
+                    hls.on(Hls.Events.ERROR, (event, data) => {{
+                        console.error("HLS.js error:", data);
+                    }});
                 }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
                     video.src = source;
                     video.addEventListener('loadedmetadata', () => video.play());
@@ -184,7 +218,7 @@ async def embed(request: Request):
                         }},
                         '*'
                     );
-                }}
+                }
             }});
 
             // Resume support
