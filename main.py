@@ -139,41 +139,34 @@ async def embed(request: Request):
                 justify-content: center;
                 align-items: center;
                 height: 100vh;
+                overflow: hidden;
             }}
             video {{
                 width: 100%;
                 height: 100%;
                 background: black;
             }}
-            #quality-controls {{
+            select {{
                 position: absolute;
                 top: 10px;
                 right: 10px;
-                z-index: 999;
-            }}
-            #quality-controls button {{
                 background: rgba(0,0,0,0.6);
                 color: white;
-                border: 1px solid #555;
-                border-radius: 4px;
-                margin: 2px;
-                padding: 4px 6px;
-                cursor: pointer;
-            }}
-            #quality-controls button:hover {{
-                background: rgba(255,255,255,0.2);
+                border: none;
+                padding: 6px 10px;
+                border-radius: 6px;
+                font-size: 14px;
+                z-index: 9999;
             }}
         </style>
     </head>
     <body>
         <video id="video" controls autoplay playsinline></video>
-        <div id="quality-controls"></div>
 
         <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
         <script>
             const video = document.getElementById('video');
-            const source = "/proxy?url={video_url}";
-            const controls = document.getElementById('quality-controls');
+            const source = "/proxy?url=" + encodeURIComponent("{video_url}");
 
             if (source.endsWith(".m3u8")) {{
                 if (Hls.isSupported()) {{
@@ -181,25 +174,30 @@ async def embed(request: Request):
                     hls.loadSource(source);
                     hls.attachMedia(video);
 
-                    hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {{
+                    hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {{
                         const levels = data.levels;
-                        console.log("Available levels:", levels);
+                        if (levels.length > 1) {{
+                            const selector = document.createElement("select");
 
-                        // Auto start with best quality
-                        hls.startLevel = levels.length - 1;
+                            const autoOpt = document.createElement("option");
+                            autoOpt.value = -1;
+                            autoOpt.textContent = "Auto";
+                            selector.appendChild(autoOpt);
 
-                        // Create quality buttons
-                        levels.forEach((level, i) => {{
-                            const btn = document.createElement('button');
-                            btn.textContent = level.height + "p";
-                            btn.onclick = () => {{
-                                hls.currentLevel = i;
-                                Array.from(controls.children).forEach(b => b.style.opacity = 0.5);
-                                btn.style.opacity = 1;
-                            }};
-                            if (i === levels.length - 1) btn.style.opacity = 1;
-                            controls.appendChild(btn);
-                        }});
+                            levels.forEach((lvl, i) => {{
+                                const opt = document.createElement("option");
+                                opt.value = i;
+                                opt.textContent = lvl.height + "p";
+                                selector.appendChild(opt);
+                            }});
+
+                            selector.addEventListener("change", (e) => {{
+                                const level = parseInt(e.target.value);
+                                hls.currentLevel = level;
+                            }});
+
+                            document.body.appendChild(selector);
+                        }}
 
                         video.play();
                     }});
@@ -235,6 +233,7 @@ async def embed(request: Request):
                 }}
             }});
 
+            // Resume support
             window.addEventListener('message', (e) => {{
                 if (e.data?.type === 'resume-video' && e.data?.time) {{
                     video.currentTime = e.data.time;
