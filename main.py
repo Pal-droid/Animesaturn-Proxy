@@ -29,13 +29,17 @@ VIDEO_HEADERS = {
 
 client = httpx.AsyncClient(verify=False, timeout=None)
 
-
 # ---------------- Proxy endpoint ----------------
 @app.get("/proxy")
 async def proxy_stream(request: Request):
     origin_url = request.query_params.get("url")
     if not origin_url:
         return {"error": "Missing 'url' query parameter"}
+
+    # --- Bypass ONLY if the URL ends with /uwu.m3u8 ---
+    if origin_url.endswith("/uwu.m3u8"):
+        logger.info(f"Bypassing proxy for uwu playlist → {origin_url}")
+        return Response(status_code=307, headers={"Location": origin_url})
 
     is_m3u8 = origin_url.lower().endswith(".m3u8")
     is_ts = origin_url.lower().endswith(".ts") or origin_url.lower().endswith(".m4s")  # include fMP4
@@ -111,12 +115,10 @@ async def proxy_stream(request: Request):
         media_type=content_type,
     )
 
-
 # ---------------- Root ----------------
 @app.get("/")
 def root():
     return {"message": "Proxy server ready (HLS + MP4/TS)"}
-
 
 # ---------------- Embed Player ----------------
 @app.get("/embed", response_class=HTMLResponse)
@@ -166,7 +168,10 @@ async def embed(request: Request):
         <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
         <script>
             const video = document.getElementById('video');
-            const source = "/proxy?url=" + encodeURIComponent("{video_url}");
+            const urlParam = "{video_url}";
+            const source = urlParam.endsWith("/uwu.m3u8")
+                ? urlParam
+                : "/proxy?url=" + encodeURIComponent(urlParam);
 
             if (source.endsWith(".m3u8")) {{
                 if (Hls.isSupported()) {{
