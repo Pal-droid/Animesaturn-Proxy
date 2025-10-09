@@ -125,7 +125,7 @@ async def embed(request: Request):
     if not video_url:
         return HTMLResponse("<h3>Error: Missing ?url= parameter</h3>")
 
-    html_content = """
+    html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -145,49 +145,63 @@ async def embed(request: Request):
                 height: 100%;
                 background: black;
             }}
+            #quality-controls {{
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                z-index: 999;
+            }}
+            #quality-controls button {{
+                background: rgba(0,0,0,0.6);
+                color: white;
+                border: 1px solid #555;
+                border-radius: 4px;
+                margin: 2px;
+                padding: 4px 6px;
+                cursor: pointer;
+            }}
+            #quality-controls button:hover {{
+                background: rgba(255,255,255,0.2);
+            }}
         </style>
     </head>
     <body>
         <video id="video" controls autoplay playsinline></video>
+        <div id="quality-controls"></div>
 
         <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
         <script>
             const video = document.getElementById('video');
             const source = "/proxy?url={video_url}";
+            const controls = document.getElementById('quality-controls');
 
             if (source.endsWith(".m3u8")) {{
                 if (Hls.isSupported()) {{
-                    const hls = new Hls({{ autoStartLoad: true, startPosition: -1 }});
+                    const hls = new Hls({{ autoStartLoad: true }});
                     hls.loadSource(source);
                     hls.attachMedia(video);
 
-                    // Allow manual quality switching
                     hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {{
                         const levels = data.levels;
                         console.log("Available levels:", levels);
 
-                        // optional: auto start at highest
+                        // Auto start with best quality
                         hls.startLevel = levels.length - 1;
 
-                        // Add a simple quality switch UI
-                        const controls = document.createElement('div');
-                        controls.style.position = 'absolute';
-                        controls.style.top = '10px';
-                        controls.style.right = '10px';
-                        controls.style.zIndex = '999';
-                        controls.style.color = 'white';
-                        levels.forEach((level, idx) => {{
+                        // Create quality buttons
+                        levels.forEach((level, i) => {{
                             const btn = document.createElement('button');
-                            btn.innerText = level.height + "p";
-                            btn.style.margin = '2px';
-                            btn.onclick = () => hls.currentLevel = idx;
+                            btn.textContent = level.height + "p";
+                            btn.onclick = () => {{
+                                hls.currentLevel = i;
+                                Array.from(controls.children).forEach(b => b.style.opacity = 0.5);
+                                btn.style.opacity = 1;
+                            }};
+                            if (i === levels.length - 1) btn.style.opacity = 1;
                             controls.appendChild(btn);
                         }});
-                        document.body.appendChild(controls);
-                    }});
 
-                    hls.on(Hls.Events.ERROR, (event, data) => {{
-                        console.error("HLS.js error:", data);
+                        video.play();
                     }});
                 }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
                     video.src = source;
@@ -218,10 +232,9 @@ async def embed(request: Request):
                         }},
                         '*'
                     );
-                }
+                }}
             }});
 
-            // Resume support
             window.addEventListener('message', (e) => {{
                 if (e.data?.type === 'resume-video' && e.data?.time) {{
                     video.currentTime = e.data.time;
