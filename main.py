@@ -125,7 +125,7 @@ async def embed(request: Request):
     if not video_url:
         return HTMLResponse("<h3>Error: Missing ?url= parameter</h3>")
 
-    html_content = f"""
+    html_content = """
     <!DOCTYPE html>
     <html lang="en">
     <head>
