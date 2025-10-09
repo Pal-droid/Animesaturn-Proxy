@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 # ---------------- FastAPI app ----------------
 app = FastAPI()
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,29 +38,43 @@ async def proxy_stream(request: Request):
         return {"error": "Missing 'url' query parameter"}
 
     is_m3u8 = origin_url.lower().endswith(".m3u8")
-    is_ts = origin_url.lower().endswith(".ts")
+    is_ts = origin_url.lower().endswith(".ts") or origin_url.lower().endswith(".m4s")  # include fMP4
 
-    # -------- HLS playlist (.m3u8) --------
+    # -------- Playlist handling (.m3u8) --------
     if is_m3u8:
         resp = await client.get(origin_url, headers=VIDEO_HEADERS)
         body = resp.text
         origin_base = origin_url.rsplit("/", 1)[0] + "/"
 
-        def rewrite_line(line: str):
+        new_lines = []
+        for line in body.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
-                return line
-            abs_uri = urljoin(origin_base, line)
-            return f"/proxy?url={abs_uri}"
+                # For audio track lines: rewrite URI
+                if 'URI="' in line:
+                    # Extract URI inside quotes
+                    import re
+                    match = re.search(r'URI="([^"]+)"', line)
+                    if match:
+                        uri = match.group(1)
+                        abs_uri = urljoin(origin_base, uri)
+                        line = line.replace(uri, f"/proxy?url={abs_uri}")
+                new_lines.append(line)
+                continue
 
-        new_body = "\n".join(rewrite_line(line) for line in body.splitlines())
+            # For normal lines (segments or variant playlists)
+            if not line.startswith("http"):
+                abs_uri = urljoin(origin_base, line)
+                line = f"/proxy?url={abs_uri}"
+            new_lines.append(line)
+
         return Response(
-            content=new_body,
+            "\n".join(new_lines),
             media_type="application/vnd.apple.mpegurl",
             headers={"Cache-Control": "no-cache"},
         )
 
-    # -------- TS / MP4 streaming --------
+    # -------- TS / fMP4 streaming --------
     headers = VIDEO_HEADERS.copy()
     range_header = request.headers.get("range")
     if range_header:
@@ -74,9 +87,9 @@ async def proxy_stream(request: Request):
             async for chunk in resp.aiter_bytes(128 * 1024):
                 yield chunk
 
-    # Get headers from origin
+    # Pre-open stream to get status & headers
     async with client.stream("GET", origin_url, headers=headers) as resp:
-        content_type = "video/MP2T" if is_ts else resp.headers.get("content-type", "video/mp4")
+        content_type = "video/MP2T" if origin_url.lower().endswith(".ts") else resp.headers.get("content-type", "video/mp4")
         response_headers = {
             "Content-Type": content_type,
             "Content-Length": resp.headers.get("content-length"),
