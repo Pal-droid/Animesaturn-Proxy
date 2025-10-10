@@ -38,8 +38,13 @@ async def proxy_stream(request: Request):
 
     # --- Bypass ONLY if the URL ends with /uwu.m3u8 ---
     if origin_url.endswith("/uwu.m3u8"):
-        logger.info(f"Bypassing proxy for uwu playlist → {origin_url}")
-        return Response(status_code=307, headers={"Location": origin_url})
+        logger.info(f"Bypassing proxy rewriting for uwu playlist → {origin_url}")
+        resp = await client.get(origin_url, headers=VIDEO_HEADERS)
+        return Response(
+            resp.text,
+            media_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     is_m3u8 = origin_url.lower().endswith(".m3u8")
     is_ts = origin_url.lower().endswith(".ts") or origin_url.lower().endswith(".m4s")  # include fMP4
@@ -169,9 +174,7 @@ async def embed(request: Request):
         <script>
             const video = document.getElementById('video');
             const urlParam = "{video_url}";
-            const source = urlParam.endsWith("/uwu.m3u8")
-                ? urlParam
-                : "/proxy?url=" + encodeURIComponent(urlParam);
+            const source = "/proxy?url=" + encodeURIComponent(urlParam); // always through proxy
 
             if (source.endsWith(".m3u8")) {{
                 if (Hls.isSupported()) {{
