@@ -174,9 +174,10 @@ async def embed(request: Request):
         <script>
             const video = document.getElementById('video');
             const urlParam = "{video_url}";
-            const source = "/proxy?url=" + encodeURIComponent(urlParam); // always through proxy
+            const isHls = urlParam.toLowerCase().endsWith(".m3u8");
+            const source = "/proxy?url=" + encodeURIComponent(urlParam);
 
-            if (source.endsWith(".m3u8")) {{
+            if (isHls) {{
                 if (Hls.isSupported()) {{
                     const hls = new Hls({{ autoStartLoad: true }});
                     hls.loadSource(source);
@@ -216,6 +217,7 @@ async def embed(request: Request):
                     document.body.innerHTML = "<h3 style='color:white'>Browser cannot play HLS streams.</h3>";
                 }}
             }} else {{
+                // For MP4 / TS direct playback
                 video.src = source;
                 video.play();
             }}
