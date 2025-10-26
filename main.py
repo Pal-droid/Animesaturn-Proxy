@@ -1,4 +1,3 @@
-# save as app.py
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
